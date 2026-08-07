@@ -1,0 +1,2 @@
+repo=https://github.com/TecharoHQ/anubis.git
+commit=b1d52ba8b5bebcd40319a4ddb5d9c6c430219145
