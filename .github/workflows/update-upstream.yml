@@ -1,0 +1,127 @@
+name: Update upstream release
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout patch repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Find latest upstream stable release
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REPO=$(grep '^repo=' upstream.txt | cut -d= -f2)
+          CURRENT=$(grep '^release=' upstream.txt | cut -d= -f2)
+
+          echo "Current release: $CURRENT"
+
+          LATEST=$(git ls-remote --tags --refs "$REPO" \
+            | awk '{print $2}' \
+            | sed 's#refs/tags/##' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | sort -V \
+            | tail -1)
+
+          echo "Latest release: $LATEST"
+
+          if [ "$LATEST" = "$CURRENT" ]; then
+            echo "Already up to date"
+            echo "update=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          COMMIT=$(git ls-remote "$REPO" "refs/tags/$LATEST" \
+            | awk '{print $1}')
+
+          echo "New release detected"
+          echo "Release: $LATEST"
+          echo "Commit:  $COMMIT"
+
+          echo "update=true" >> "$GITHUB_OUTPUT"
+          echo "release=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+
+      - name: Update upstream.txt
+        if: steps.upstream.outputs.update == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sed -i \
+            "s/^release=.*/release=${{ steps.upstream.outputs.release }}/" \
+            upstream.txt
+
+          sed -i \
+            "s/^commit=.*/commit=${{ steps.upstream.outputs.commit }}/" \
+            upstream.txt
+
+          cat upstream.txt
+
+      - name: Checkout upstream source
+        if: steps.upstream.outputs.update == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REPO=$(grep '^repo=' upstream.txt | cut -d= -f2)
+          COMMIT=$(grep '^commit=' upstream.txt | cut -d= -f2)
+
+          git clone "$REPO" upstream
+
+          cd upstream
+          git checkout "$COMMIT"
+
+      - name: Apply patches validation
+        if: steps.upstream.outputs.update == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd upstream
+
+          git apply ../patches/*.patch
+
+      - name: Commit upstream update
+        if: steps.upstream.outputs.update == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add upstream.txt
+
+          git commit \
+            -m "Update upstream to ${{ steps.upstream.outputs.release }}"
+
+      - name: Push commit
+        if: steps.upstream.outputs.update == 'true'
+        shell: bash
+        run: |
+          git push origin HEAD
+
+      - name: Create release tag
+        if: steps.upstream.outputs.update == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git tag "${{ steps.upstream.outputs.release }}"
+
+          git push origin "${{ steps.upstream.outputs.release }}"
