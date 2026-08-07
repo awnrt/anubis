@@ -1,8 +1,13 @@
 diff --git a/web/index.templ b/web/index.templ
-index e95a2f7..dfa0214 100644
+index e95a2f7..64a623c 100644
 --- a/web/index.templ
 +++ b/web/index.templ
-@@ -52,7 +52,7 @@ templ base(title string, body templ.Component, impressum *config.Impressum, hone
+@@ -48,11 +48,11 @@ templ base(title string, body templ.Component, impressum *config.Impressum, hone
+             overflow: hidden;
+             margin: 1rem 0 2rem;
+             outline-offset: 2px;
+-            outline: #b16286 solid 4px;
++            outline: var(--progress-bar-outline) solid 4px;
          }
  
          .bar-inner {
