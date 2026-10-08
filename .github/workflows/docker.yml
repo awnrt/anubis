@@ -5,6 +5,13 @@ on:
     tags:
       - "v*"
 
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build"
+        required: true
+        type: string
+
 env:
   DOCKER_METADATA_SET_OUTPUT_ENV: "true"
 
@@ -23,23 +30,41 @@ jobs:
       - name: Checkout patch repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ inputs.tag || github.ref }}
           fetch-tags: true
           fetch-depth: 0
           persist-credentials: false
 
       - name: Checkout upstream
+        shell: bash
         run: |
+          set -euo pipefail
+
           REPO=$(grep '^repo=' upstream.txt | cut -d= -f2)
           COMMIT=$(grep '^commit=' upstream.txt | cut -d= -f2)
 
           git clone "$REPO" upstream
+
           cd upstream
-          git checkout "$COMMIT"
+          git checkout --detach "$COMMIT"
 
       - name: Apply patches
+        shell: bash
         run: |
+          set -euo pipefail
+
           cd upstream
-          git apply ../patches/*.patch
+
+          shopt -s nullglob
+          patches=(../patches/*.patch)
+
+          if [ "${#patches[@]}" -eq 0 ]; then
+            echo "No patches found"
+            exit 0
+          fi
+
+          git apply --check "${patches[@]}"
+          git apply "${patches[@]}"
 
       - name: Build essential
         run: |
@@ -48,7 +73,15 @@ jobs:
 
       - name: Set lowercase image name
         run: |
-          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: Set release tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "RELEASE_TAG=${{ inputs.tag }}" >> "$GITHUB_ENV"
+          else
+            echo "RELEASE_TAG=${{ github.ref_name }}" >> "$GITHUB_ENV"
+          fi
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
@@ -75,9 +108,9 @@ jobs:
           flavor: |
             latest=false
           tags: |
-            type=ref,event=tag
-            type=raw,value=latest,enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-pre') }}
-            type=raw,value=pre,enable=${{ github.ref_type == 'tag' && contains(github.ref_name, '-pre') }}
+            type=raw,value=${{ env.RELEASE_TAG }}
+            type=raw,value=latest,enable=${{ !contains(env.RELEASE_TAG, '-pre') }}
+            type=raw,value=pre,enable=${{ contains(env.RELEASE_TAG, '-pre') }}
 
       - name: Build and push
         id: build

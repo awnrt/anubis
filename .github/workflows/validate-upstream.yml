@@ -1,0 +1,98 @@
+name: Validate upstream update
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - upstream.txt
+      - patches/**
+      - .github/workflows/validate-upstream.yml
+
+  merge_group:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Apply patches
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout patch repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Read upstream configuration
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REPO=$(grep '^repo=' upstream.txt | cut -d= -f2)
+          RELEASE=$(grep '^release=' upstream.txt | cut -d= -f2)
+
+          echo "repo=$REPO" >> "$GITHUB_OUTPUT"
+          echo "release=$RELEASE" >> "$GITHUB_OUTPUT"
+
+          echo "Repository: $REPO"
+          echo "Release:    $RELEASE"
+
+      - name: Resolve upstream release
+        id: resolve
+        shell: bash
+        env:
+          REPO: ${{ steps.upstream.outputs.repo }}
+          RELEASE: ${{ steps.upstream.outputs.release }}
+        run: |
+          set -euo pipefail
+
+          COMMIT=$(git ls-remote "$REPO" "refs/tags/$RELEASE" | awk '{print $1}')
+
+          if [ -z "$COMMIT" ]; then
+            echo "::error::Upstream tag $RELEASE does not exist"
+            exit 1
+          fi
+
+          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+
+          echo "Release: $RELEASE"
+          echo "Commit:  $COMMIT"
+
+      - name: Checkout upstream source
+        shell: bash
+        env:
+          REPO: ${{ steps.upstream.outputs.repo }}
+          COMMIT: ${{ steps.resolve.outputs.commit }}
+        run: |
+          set -euo pipefail
+
+          git clone "$REPO" upstream
+
+          cd upstream
+          git checkout --detach "$COMMIT"
+
+      - name: Apply patches
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd upstream
+
+          shopt -s nullglob
+          patches=(../patches/*.patch)
+
+          if [ "${#patches[@]}" -eq 0 ]; then
+            echo "No patches found"
+            exit 0
+          fi
+
+          git apply --check "${patches[@]}"
+          git apply "${patches[@]}"
+
+          echo "All patches applied successfully"

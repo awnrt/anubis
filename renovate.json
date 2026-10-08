@@ -1,0 +1,49 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+
+  "extends": [
+    "config:best-practices"
+  ],
+
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^upstream\\.txt$/"
+      ],
+      "matchStrings": [
+        "repo=https://github\\.com/(?<depName>[^\\s]+)\\.git\\nrelease=(?<currentValue>v\\d+\\.\\d+\\.\\d+)\\ncommit=[0-9a-f]{40}"
+      ],
+      "datasourceTemplate": "github-tags",
+      "versioningTemplate": "semver"
+    }
+  ],
+
+  "packageRules": [
+    {
+      "description": "Automatically merge upstream Anubis releases after patch validation",
+      "matchPackageNames": [
+        "TecharoHQ/anubis"
+      ],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+
+    {
+      "description": "Automatically merge non-major GitHub Action updates",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "patch",
+        "minor",
+        "digest",
+        "pin"
+      ],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    }
+  ]
+}

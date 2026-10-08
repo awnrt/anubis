@@ -1,0 +1,137 @@
+name: Release upstream update
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - upstream.txt
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  release:
+    name: Tag and build upstream release
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout patch repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Resolve upstream release
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REPO=$(grep '^repo=' upstream.txt | cut -d= -f2)
+          RELEASE=$(grep '^release=' upstream.txt | cut -d= -f2)
+
+          if ! [[ "$RELEASE" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Unsupported release format: $RELEASE"
+            exit 1
+          fi
+
+          COMMIT=$(git ls-remote "$REPO" "refs/tags/$RELEASE" | awk '{print $1}')
+
+          if [ -z "$COMMIT" ]; then
+            echo "::error::Upstream tag $RELEASE does not exist"
+            exit 1
+          fi
+
+          echo "release=$RELEASE" >> "$GITHUB_OUTPUT"
+          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+
+          echo "Release: $RELEASE"
+          echo "Commit:  $COMMIT"
+
+      - name: Check whether release already exists
+        id: existing
+        env:
+          RELEASE: ${{ steps.upstream.outputs.release }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch --tags --force
+
+          if git rev-parse "refs/tags/$RELEASE" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag $RELEASE already exists"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update upstream commit
+        if: steps.existing.outputs.exists == 'false'
+        env:
+          COMMIT: ${{ steps.upstream.outputs.commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          CURRENT=$(grep '^commit=' upstream.txt | cut -d= -f2)
+
+          if [ "$CURRENT" = "$COMMIT" ]; then
+            echo "Commit is already correct"
+            exit 0
+          fi
+
+          sed -i "s/^commit=.*/commit=$COMMIT/" upstream.txt
+
+          echo "Updated upstream.txt:"
+          cat upstream.txt
+
+      - name: Commit resolved upstream commit
+        if: steps.existing.outputs.exists == 'false'
+        env:
+          RELEASE: ${{ steps.upstream.outputs.release }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- upstream.txt; then
+            echo "No commit update required"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add upstream.txt
+
+          git commit \
+            -m "Pin upstream $RELEASE"
+
+          git push origin HEAD:main
+
+      - name: Create release tag
+        if: steps.existing.outputs.exists == 'false'
+        env:
+          RELEASE: ${{ steps.upstream.outputs.release }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch origin main
+          git checkout --detach origin/main
+
+          git tag "$RELEASE"
+          git push origin "$RELEASE"
+
+      - name: Start Docker build
+        if: steps.existing.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: ${{ steps.upstream.outputs.release }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh workflow run docker-build.yml \
+            --ref main \
+            -f tag="$RELEASE"
