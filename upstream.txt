@@ -1,3 +1,3 @@
 repo=https://github.com/TecharoHQ/anubis.git
 release=v1.28.1
-commit=d937c054b47322a356651ba189ec3591fd19d20e
+commit=547b7181e758698dea128d749af2c7708b7a010b
