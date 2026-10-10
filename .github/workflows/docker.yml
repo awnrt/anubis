@@ -1,10 +1,8 @@
 name: Docker image builds
-
 on:
   push:
     tags:
       - "v*"
-
   workflow_dispatch:
     inputs:
       tag:
@@ -44,7 +42,6 @@ jobs:
           COMMIT=$(grep '^commit=' upstream.txt | cut -d= -f2)
 
           git clone "$REPO" upstream
-
           cd upstream
           git checkout --detach "$COMMIT"
 
@@ -52,7 +49,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           cd upstream
 
           shopt -s nullglob
@@ -66,32 +62,54 @@ jobs:
           git apply --check "${patches[@]}"
           git apply "${patches[@]}"
 
-      - name: Build essential
+      - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential
+          sudo apt-get install -y build-essential brotli zstd
 
       - name: Set lowercase image name
+        shell: bash
         run: |
           echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
 
       - name: Set release tag
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "RELEASE_TAG=${{ inputs.tag }}" >> "$GITHUB_ENV"
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            RELEASE_TAG="$INPUT_TAG"
           else
-            echo "RELEASE_TAG=${{ github.ref_name }}" >> "$GITHUB_ENV"
+            RELEASE_TAG="$REF_NAME"
           fi
 
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: "24.11.0"
+          echo "RELEASE_TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
 
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "24.15.0"
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: "stable"
 
-      - uses: ko-build/setup-ko@61b4d1d396f5b2e7d6bb6fefdce3dc38d1a13445 # v0.10
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache: false
+          target: wasm32-unknown-unknown
+
+      - name: Set up wasmtime
+        uses: bytecodealliance/actions/wasmtime/setup@9152e710e9f7182e4c29ad218e4f335a7b203613 # v1.1.3
+
+      - name: Set up ko
+        uses: ko-build/setup-ko@61b4d1d396f5b2e7d6bb6fefdce3dc38d1a13445 # v0.10
 
       - name: Log into registry
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
@@ -115,7 +133,9 @@ jobs:
       - name: Build and push
         id: build
         working-directory: upstream
+        shell: bash
         run: |
+          set -euo pipefail
           npm ci
           npm run container
         env:
